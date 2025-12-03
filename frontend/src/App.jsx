@@ -91,7 +91,7 @@ function App() {
             <input
               type="text"
               className="city-input"
-              placeholder="Miami, FL"
+              placeholder="New York, NY"
               value={city}
               onChange={(e) => setCity(e.target.value)}
               onKeyPress={(e) => e.key === 'Enter' && city && setStep(2)}
@@ -99,7 +99,7 @@ function App() {
             <div className="input-underline"></div>
           </div>
 
-          <button 
+          <button
             className="btn btn-primary"
             onClick={() => city && setStep(2)}
             disabled={!city}
@@ -108,7 +108,7 @@ function App() {
           </button>
 
           <div className="supported-cities">
-            <small>Currently supporting: Miami FL, Orlando FL</small>
+            <small>Supporting cities worldwide via Foursquare API</small>
           </div>
         </section>
       )}

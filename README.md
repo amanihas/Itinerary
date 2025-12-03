@@ -46,9 +46,27 @@ cd frontend
 npm install
 ```
 
-### 2. Run the Application
+### 2. Configure Foursquare API (Optional but Recommended)
 
-**Terminal 1 - Start Backend (Port 3000):**
+To support all cities worldwide, you'll need a Foursquare API key:
+
+1. Sign up for a free account at [Foursquare Developers](https://foursquare.com/developers/signup)
+2. Create a new project and get your API key
+3. Copy `backend/.env.example` to `backend/.env`
+4. Add your API key to `.env`:
+
+```bash
+FOURSQUARE_API_KEY=your_api_key_here
+USE_PLACES_API=true
+```
+
+**Without an API key:** The app will still work with hardcoded data for Miami, FL and Orlando, FL only.
+
+**With an API key:** The app will support any city worldwide! 🌍
+
+### 3. Run the Application
+
+**Terminal 1 - Start Backend (Port 3001):**
 ```bash
 cd backend
 npm start
@@ -60,10 +78,10 @@ cd frontend
 npm run dev
 ```
 
-### 3. Open in Browser
+### 4. Open in Browser
 
 Navigate to `http://localhost:5173` and try:
-- Enter: **Miami, FL**
+- Enter: **New York, NY** (or any city!)
 - Pick: **Foodie**
 - Choose: **Cheap date**
 - Click: **Generate My Vibe**
@@ -91,6 +109,7 @@ See the [docs](docs/) folder for comprehensive guides:
 
 ## 🎨 Features
 
+- ✅ **Worldwide city support** via Foursquare Places API
 - ✅ 3-step user flow (city → persona → intent)
 - ✅ 6 preset personas + custom input
 - ✅ 8 intent modifiers
@@ -98,6 +117,7 @@ See the [docs](docs/) folder for comprehensive guides:
 - ✅ Personalized explanations
 - ✅ Cost & time estimates
 - ✅ Fully responsive design
+- ✅ Falls back to curated data for Miami & Orlando without API key
 
 ## 📄 License
 
