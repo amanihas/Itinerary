@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vibe Guide — Design Preview</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,900&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'DM Sans', -apple-system, sans-serif;
+            background: #fefefe;
+            color: #0a0a0a;
+            line-height: 1.6;
+            padding: 2rem;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 4rem;
+            padding-bottom: 2rem;
+            border-bottom: 3px solid #0a0a0a;
+        }
+
+        .title {
+            font-family: 'Playfair Display', serif;
+            font-weight: 900;
+            font-style: italic;
+            font-size: clamp(3rem, 10vw, 6rem);
+            letter-spacing: -0.05em;
+            line-height: 0.9;
+            margin-bottom: 0.5rem;
+        }
+
+        .subtitle {
+            font-size: 1.25rem;
+            color: #404040;
+            letter-spacing: 0.05em;
+            text-transform: uppercase;
+            font-weight: 500;
+        }
+
+        .intro {
+            background: #0a0a0a;
+            color: #fefefe;
+            padding: 3rem;
+            margin-bottom: 4rem;
+        }
+
+        .intro h2 {
+            font-family: 'Playfair Display', serif;
+            font-size: 2rem;
+            margin-bottom: 1rem;
+        }
+
+        .intro p {
+            font-size: 1.125rem;
+            line-height: 1.8;
+            margin-bottom: 1rem;
+        }
+
+        .section {
+            margin-bottom: 4rem;
+        }
+
+        .section h2 {
+            font-family: 'Playfair Display', serif;
+            font-size: 2.5rem;
+            margin-bottom: 2rem;
+            font-weight: 700;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 2rem;
+        }
+
+        .card {
+            border: 3px solid #0a0a0a;
+            padding: 2rem;
+            background: #fefefe;
+            transition: transform 0.3s ease;
+        }
+
+        .card:hover {
+            transform: translateX(8px);
+            box-shadow: -8px 0 0 #ff3366;
+        }
+
+        .card h3 {
+            font-family: 'Playfair Display', serif;
+            font-size: 1.75rem;
+            margin-bottom: 1rem;
+            font-weight: 700;
+        }
+
+        .card p {
+            color: #262626;
+            line-height: 1.7;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 0.5rem 1rem;
+            background: #0a0a0a;
+            color: #fefefe;
+            font-size: 0.875rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            margin-top: 1rem;
+            margin-right: 0.5rem;
+        }
+
+        .badge.red {
+            background: #ff3366;
+        }
+
+        .color-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 1rem;
+            margin-top: 2rem;
+        }
+
+        .color-box {
+            height: 120px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            font-size: 0.875rem;
+            letter-spacing: 0.05em;
+        }
+
+        .color-box.black {
+            background: #0a0a0a;
+            color: #fefefe;
+        }
+
+        .color-box.white {
+            background: #fefefe;
+            color: #0a0a0a;
+            border: 2px solid #0a0a0a;
+        }
+
+        .color-box.red {
+            background: #ff3366;
+            color: #fefefe;
+        }
+
+        .color-box.grey {
+            background: #404040;
+            color: #fefefe;
+        }
+
+        .feature-list {
+            list-style: none;
+            padding-left: 0;
+        }
+
+        .feature-list li {
+            padding: 1rem 0;
+            border-bottom: 1px solid #e5e5e5;
+            font-size: 1.125rem;
+        }
+
+        .feature-list li:before {
+            content: "→ ";
+            color: #ff3366;
+            font-weight: 700;
+            margin-right: 0.5rem;
+        }
+
+        .screenshot {
+            border: 3px solid #0a0a0a;
+            padding: 2rem;
+            background: #f5f5f5;
+            margin-top: 2rem;
+        }
+
+        .screenshot h4 {
+            font-family: 'Playfair Display', serif;
+            font-size: 1.5rem;
+            margin-bottom: 1rem;
+        }
+
+        .screenshot-content {
+            background: #fefefe;
+            padding: 2rem;
+            border: 2px solid #0a0a0a;
+        }
+
+        .mock-input {
+            width: 100%;
+            font-size: 1.5rem;
+            padding: 1rem 0;
+            border: none;
+            border-bottom: 3px solid #0a0a0a;
+            font-family: 'DM Sans', sans-serif;
+            font-weight: 600;
+            background: transparent;
+            color: #0a0a0a;
+        }
+
+        .persona-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 1rem;
+            margin: 2rem 0;
+        }
+
+        .persona-card {
+            padding: 1.5rem;
+            border: 2px solid #0a0a0a;
+            background: #fefefe;
+            text-align: center;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .persona-card:hover {
+            background: #0a0a0a;
+            color: #fefefe;
+        }
+
+        .footer {
+            text-align: center;
+            padding: 3rem 0;
+            border-top: 2px solid #e5e5e5;
+            margin-top: 4rem;
+            color: #404040;
+        }
+
+        .footer a {
+            color: #ff3366;
+            text-decoration: none;
+            font-weight: 700;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1 class="title">VIBE GUIDE</h1>
+            <p class="subtitle">Design Preview</p>
+        </div>
+
+        <div class="intro">
+            <h2>A Psychology-Driven Personalization Engine</h2>
+            <p>Not a travel guide. A vibe matcher. Generate hyper-personalized micro-itineraries based on personality, mood, and intent.</p>
+            <p>This preview showcases the design system, user flow, and key features of the application.</p>
+        </div>
+
+        <div class="section">
+            <h2>Design Philosophy</h2>
+            <div class="grid">
+                <div class="card">
+                    <h3>Brutalist-Editorial</h3>
+                    <p>Bold typography, high contrast, intentional use of space. Combines the raw honesty of brutalism with the refined hierarchy of editorial design.</p>
+                    <span class="badge">Distinctive</span>
+                    <span class="badge red">Memorable</span>
+                </div>
+                <div class="card">
+                    <h3>Typography First</h3>
+                    <p>Playfair Display (serif) for display creates emotional impact. DM Sans (sans-serif) for body provides clean readability.</p>
+                    <span class="badge">Display</span>
+                    <span class="badge">Body</span>
+                </div>
+                <div class="card">
+                    <h3>Zero AI Slop</h3>
+                    <p>No Inter, no purple gradients, no cookie-cutter layouts. Every choice is intentional and context-specific.</p>
+                    <span class="badge red">Original</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>Color System</h2>
+            <div class="color-grid">
+                <div class="color-box black">#0a0a0a<br>Black</div>
+                <div class="color-box white">#fefefe<br>White</div>
+                <div class="color-box red">#ff3366<br>Accent Red</div>
+                <div class="color-box grey">#404040<br>Grey</div>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>User Flow</h2>
+            <ul class="feature-list">
+                <li><strong>Step 1:</strong> Enter your city (e.g., "Miami, FL")</li>
+                <li><strong>Step 2:</strong> Choose a persona or type your vibe</li>
+                <li><strong>Step 3:</strong> Optionally select an intent modifier</li>
+                <li><strong>Step 4:</strong> Get your personalized micro-itinerary</li>
+            </ul>
+        </div>
+
+        <div class="section">
+            <h2>Interactive Elements</h2>
+            
+            <div class="screenshot">
+                <h4>City Input (Step 1)</h4>
+                <div class="screenshot-content">
+                    <div style="font-family: 'Playfair Display', serif; font-size: 8rem; font-weight: 900; color: #e5e5e5; line-height: 1; margin-bottom: -2rem;">01</div>
+                    <h3 style="font-family: 'Playfair Display', serif; font-size: 3rem; margin-bottom: 1rem;">Where are you?</h3>
+                    <input type="text" class="mock-input" placeholder="Miami, FL" disabled>
+                </div>
+            </div>
+
+            <div class="screenshot">
+                <h4>Persona Selection (Step 2)</h4>
+                <div class="screenshot-content">
+                    <h3 style="font-family: 'Playfair Display', serif; font-size: 2rem; margin-bottom: 1rem;">Who are you?</h3>
+                    <div class="persona-grid">
+                        <div class="persona-card">Foodie</div>
+                        <div class="persona-card">Introvert</div>
+                        <div class="persona-card">Artsy</div>
+                        <div class="persona-card">Nature lover</div>
+                        <div class="persona-card">History nerd</div>
+                        <div class="persona-card">Broke student</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>Key Features</h2>
+            <div class="grid">
+                <div class="card">
+                    <h3>6 Personas</h3>
+                    <p>Foodie, Introvert, Artsy, Nature lover, History nerd, Broke college student — or type your own custom vibe.</p>
+                </div>
+                <div class="card">
+                    <h3>8 Intent Modifiers</h3>
+                    <p>Cheap date, Avoid tourists, Walking route, Hidden gems, Photography, Spontaneous, 3-hour tour, Locals-only.</p>
+                </div>
+                <div class="card">
+                    <h3>Smart Curation</h3>
+                    <p>2-4 carefully selected spots with personalized "why" explanations. Not 20 random suggestions — focused experiences.</p>
+                </div>
+                <div class="card">
+                    <h3>2 Cities (Expanding)</h3>
+                    <p>Miami and Orlando with 48 total curated spots. Easy to add more cities by editing the backend.</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>Technical Stack</h2>
+            <div class="grid">
+                <div class="card">
+                    <h3>Frontend</h3>
+                    <p>React 18 + Vite for modern, fast development. Custom CSS with intentional styling — no Tailwind, no Bootstrap.</p>
+                    <span class="badge">React</span>
+                    <span class="badge">Vite</span>
+                </div>
+                <div class="card">
+                    <h3>Backend</h3>
+                    <p>Express + Node.js with in-memory data store. Simple, scalable, and lightning-fast (~5ms response time).</p>
+                    <span class="badge">Express</span>
+                    <span class="badge">Node.js</span>
+                </div>
+                <div class="card">
+                    <h3>Deployment</h3>
+                    <p>Multiple options: Vercel + Railway (easiest), Docker + DigitalOcean, or AWS serverless. Your choice!</p>
+                    <span class="badge red">Production Ready</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>What You Get</h2>
+            <ul class="feature-list">
+                <li>Complete, working full-stack application</li>
+                <li>Beautiful, distinctive design system</li>
+                <li>Comprehensive documentation (6 guides)</li>
+                <li>Deployment instructions for multiple platforms</li>
+                <li>Clean, extensible, well-commented code</li>
+                <li>API examples and testing references</li>
+                <li>Ready to customize and extend</li>
+            </ul>
+        </div>
+
+        <div class="footer">
+            <p><strong>Vibe Guide</strong> — Micro-itineraries for real people</p>
+            <p>Made with ☕ and intentionality</p>
+            <p style="margin-top: 1rem; font-size: 0.875rem;">
+                <a href="README.md">README</a> •
+                <a href="QUICKSTART.md">Quick Start</a> •
+                <a href="DESIGN.md">Design Guide</a> •
+                <a href="DEPLOYMENT.md">Deployment</a>
+            </p>
+        </div>
+    </div>
+</body>
+</html>
