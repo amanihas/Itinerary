@@ -1,11 +1,18 @@
 import express from 'express';
 import cors from 'cors';
+import dotenv from 'dotenv';
+
+dotenv.config();
 
 const app = express();
 const PORT = 3001;
 
 app.use(cors());
 app.use(express.json());
+
+// Configuration
+const FOURSQUARE_API_KEY = process.env.FOURSQUARE_API_KEY;
+const USE_PLACES_API = process.env.USE_PLACES_API !== 'false';
 
 // Database of curated spots by city
 const cityData = {
@@ -99,6 +106,139 @@ const intents = {
   'locals-only': { preferKeyword: 'authentic' }
 };
 
+// Foursquare category mapping
+const categoryToFoursquareQuery = {
+  foodie: ['restaurant', 'cafe', 'bakery', 'food'],
+  introvert: ['garden', 'library', 'bookstore', 'park', 'museum'],
+  artsy: ['museum', 'gallery', 'art', 'theater', 'cultural center'],
+  nature: ['park', 'nature', 'trail', 'beach', 'garden'],
+  history: ['museum', 'historic site', 'landmark', 'monument'],
+  broke: ['park', 'free attraction', 'beach', 'public space']
+};
+
+// Geocode city using Foursquare
+async function geocodeCity(cityName) {
+  if (!FOURSQUARE_API_KEY) {
+    return null;
+  }
+
+  try {
+    const response = await fetch(
+      `https://api.foursquare.com/v3/places/search?query=${encodeURIComponent(cityName)}&limit=1`,
+      {
+        headers: {
+          'Authorization': FOURSQUARE_API_KEY,
+          'Accept': 'application/json'
+        }
+      }
+    );
+
+    if (!response.ok) {
+      console.error(`Foursquare geocoding error: ${response.status}`);
+      return null;
+    }
+
+    const data = await response.json();
+    if (data.results && data.results.length > 0) {
+      const place = data.results[0];
+      return {
+        lat: place.geocodes.main.latitude,
+        lng: place.geocodes.main.longitude,
+        name: place.location.locality || cityName
+      };
+    }
+  } catch (error) {
+    console.error('Geocoding error:', error);
+  }
+
+  return null;
+}
+
+// Search for places using Foursquare API
+async function searchPlaces(lat, lng, category, limit = 20) {
+  if (!FOURSQUARE_API_KEY) {
+    return null;
+  }
+
+  const queries = categoryToFoursquareQuery[category] || ['attraction'];
+  const allPlaces = [];
+
+  try {
+    // Make requests for each query type
+    for (const query of queries.slice(0, 2)) { // Limit to 2 queries to save API calls
+      const response = await fetch(
+        `https://api.foursquare.com/v3/places/search?ll=${lat},${lng}&query=${encodeURIComponent(query)}&radius=10000&limit=${Math.ceil(limit / 2)}`,
+        {
+          headers: {
+            'Authorization': FOURSQUARE_API_KEY,
+            'Accept': 'application/json'
+          }
+        }
+      );
+
+      if (!response.ok) {
+        console.error(`Foursquare search error: ${response.status}`);
+        continue;
+      }
+
+      const data = await response.json();
+      if (data.results) {
+        allPlaces.push(...data.results);
+      }
+    }
+
+    // Transform Foursquare data to our format
+    const transformedPlaces = allPlaces.map(place => {
+      // Estimate cost based on category
+      const priceLevel = place.price || 2;
+      const costMap = ['Free', '$', '$$', '$$$'];
+      const cost = costMap[Math.min(priceLevel, 3)] || '$$';
+
+      // Estimate time based on category
+      const categoryName = place.categories?.[0]?.name?.toLowerCase() || '';
+      let time = '1hr';
+      if (categoryName.includes('cafe') || categoryName.includes('bakery')) {
+        time = '45min';
+      } else if (categoryName.includes('museum') || categoryName.includes('park')) {
+        time = '2hr';
+      } else if (categoryName.includes('restaurant')) {
+        time = '1hr';
+      }
+
+      // Generate vibe from categories
+      const vibes = [];
+      if (place.categories) {
+        place.categories.slice(0, 2).forEach(cat => {
+          const catName = cat.name.toLowerCase();
+          if (catName.includes('casual')) vibes.push('casual');
+          if (catName.includes('upscale')) vibes.push('refined');
+          if (catName.includes('outdoor')) vibes.push('outdoor');
+          if (catName.includes('historic')) vibes.push('historic');
+        });
+      }
+      if (vibes.length === 0) vibes.push('local', 'authentic');
+
+      return {
+        name: place.name,
+        type: place.categories?.[0]?.name || 'Attraction',
+        vibe: vibes.join(', '),
+        cost: cost,
+        time: time,
+        description: place.description || `Popular ${place.categories?.[0]?.name || 'spot'} in the area`,
+        lat: place.geocodes.main.latitude,
+        lng: place.geocodes.main.longitude,
+        rating: place.rating || null,
+        photos: place.photos || []
+      };
+    });
+
+    return transformedPlaces;
+  } catch (error) {
+    console.error('Places search error:', error);
+    return null;
+  }
+}
+
 // Generate itinerary based on city, persona, and intent
 app.post('/api/generate', async (req, res) => {
   const { city, persona, intent, customPersona } = req.body;
@@ -108,12 +248,135 @@ app.post('/api/generate', async (req, res) => {
   }
 
   const effectivePersona = customPersona || persona;
-  const citySpots = cityData[city];
+  let citySpots = cityData[city];
 
+  // If city not in hardcoded data, try to use Places API
+  if (!citySpots && USE_PLACES_API && FOURSQUARE_API_KEY) {
+    console.log(`Fetching data for ${city} from Foursquare API...`);
+
+    // Geocode the city first
+    const cityLocation = await geocodeCity(city);
+
+    if (!cityLocation) {
+      return res.status(404).json({
+        error: 'City not found',
+        message: `Could not find location data for "${city}". Please check the city name and try again.`
+      });
+    }
+
+    // Map persona to category
+    const personaMap = {
+      'Foodie': 'foodie',
+      'Introvert': 'introvert',
+      'Artsy': 'artsy',
+      'Nature lover': 'nature',
+      'History nerd': 'history',
+      'Broke college student': 'broke'
+    };
+
+    let selectedCategory = personaMap[effectivePersona] || 'foodie';
+
+    // For custom personas, use heuristics
+    if (customPersona) {
+      const lower = customPersona.toLowerCase();
+      if (lower.includes('food') || lower.includes('eat')) selectedCategory = 'foodie';
+      else if (lower.includes('quiet') || lower.includes('alone') || lower.includes('introvert')) selectedCategory = 'introvert';
+      else if (lower.includes('art') || lower.includes('creative') || lower.includes('aesthetic')) selectedCategory = 'artsy';
+      else if (lower.includes('nature') || lower.includes('outdoor') || lower.includes('hike')) selectedCategory = 'nature';
+      else if (lower.includes('history') || lower.includes('museum')) selectedCategory = 'history';
+      else if (lower.includes('cheap') || lower.includes('broke') || lower.includes('budget')) selectedCategory = 'broke';
+    }
+
+    // Search for places
+    const places = await searchPlaces(cityLocation.lat, cityLocation.lng, selectedCategory);
+
+    if (!places || places.length === 0) {
+      return res.status(404).json({
+        error: 'No places found',
+        message: `Could not find suitable places in ${city}. Try a different city or persona.`
+      });
+    }
+
+    // Create a temporary citySpots object for this city
+    citySpots = {
+      [selectedCategory]: places
+    };
+
+    // Use the API-generated spots
+    let spots = citySpots[selectedCategory];
+
+    // Apply intent filters (same logic as before)
+    const intentConfig = intent ? intents[intent] : null;
+
+    if (intentConfig) {
+      if (intentConfig.maxCost) {
+        const costOrder = ['Free', '$', '$$', '$$$'];
+        const maxIndex = costOrder.indexOf(intentConfig.maxCost);
+        spots = spots.filter(s => costOrder.indexOf(s.cost) <= maxIndex);
+      }
+
+      if (intentConfig.keywords) {
+        spots = spots.filter(s =>
+          intentConfig.keywords.some(kw =>
+            s.vibe.toLowerCase().includes(kw) ||
+            s.description.toLowerCase().includes(kw)
+          )
+        );
+      }
+    }
+
+    // Select 2-4 spots
+    let numSpots = 3;
+    if (intent === 'three-hours') numSpots = 2;
+    if (intent === 'walking-route') numSpots = 4;
+
+    // Shuffle and select
+    const shuffled = [...spots].sort(() => Math.random() - 0.5);
+    const selected = shuffled.slice(0, Math.min(numSpots, shuffled.length));
+
+    // Calculate totals
+    const costMap = { 'Free': 0, '$': 10, '$$': 30, '$$$': 60 };
+    const totalCost = selected.reduce((sum, s) => sum + costMap[s.cost], 0);
+    const totalTime = selected.reduce((sum, s) => {
+      const match = s.time.match(/(\d+\.?\d*)/);
+      return sum + (match ? parseFloat(match[1]) * 60 : 60);
+    }, 0);
+
+    // Generate personalized explanations
+    const explanations = {
+      foodie: 'These spots celebrate authentic flavors and culinary craft',
+      introvert: 'These are peaceful sanctuaries where you can recharge',
+      artsy: 'These spaces inspire creativity and visual discovery',
+      nature: 'These places reconnect you with natural beauty',
+      history: 'These landmarks tell the real stories behind the city',
+      broke: 'These prove the best experiences don\'t need a big budget'
+    };
+
+    const itinerary = {
+      city: cityLocation.name,
+      persona: effectivePersona,
+      intent: intent || 'none',
+      spots: selected.map((spot, idx) => ({
+        order: idx + 1,
+        ...spot,
+        why: generateWhy(spot, effectivePersona, selectedCategory)
+      })),
+      summary: {
+        totalCost: totalCost === 0 ? 'Free' : `$${totalCost}`,
+        totalTime: `${Math.round(totalTime)} minutes`,
+        vibe: explanations[selectedCategory],
+        route: generateRoute(selected)
+      }
+    };
+
+    return res.json(itinerary);
+  }
+
+  // Use hardcoded data if available
   if (!citySpots) {
-    return res.status(404).json({ 
-      error: 'City not yet supported', 
-      message: `We're still building out ${city}. Try Miami, FL or Orlando, FL!` 
+    return res.status(404).json({
+      error: 'City not yet supported',
+      message: `We're still building out ${city}. Currently supporting: Miami, FL and Orlando, FL`
     });
   }
 
