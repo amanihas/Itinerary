@@ -11,8 +11,11 @@ app.use(cors());
 app.use(express.json());
 
 // Configuration
-const FOURSQUARE_API_KEY = process.env.FOURSQUARE_API_KEY;
 const USE_PLACES_API = process.env.USE_PLACES_API !== 'false';
+
+// OpenStreetMap API configuration (completely free, no API key needed)
+const NOMINATIM_API = 'https://nominatim.openstreetmap.org';
+const OVERPASS_API = 'https://overpass-api.de/api/interpreter';
 
 // Database of curated spots by city
 const cityData = {
@@ -106,45 +109,91 @@ const intents = {
   'locals-only': { preferKeyword: 'authentic' }
 };
 
-// Foursquare category mapping
-const categoryToFoursquareQuery = {
-  foodie: ['restaurant', 'cafe', 'bakery', 'food'],
-  introvert: ['garden', 'library', 'bookstore', 'park', 'museum'],
-  artsy: ['museum', 'gallery', 'art', 'theater', 'cultural center'],
-  nature: ['park', 'nature', 'trail', 'beach', 'garden'],
-  history: ['museum', 'historic site', 'landmark', 'monument'],
-  broke: ['park', 'free attraction', 'beach', 'public space']
+// Rich OSM category mapping for personalities
+const personaToOSMTags = {
+  foodie: {
+    amenity: ['restaurant', 'cafe', 'fast_food', 'bar', 'ice_cream', 'bakery', 'food_court'],
+    shop: ['bakery', 'coffee', 'confectionery', 'deli', 'cheese', 'chocolate'],
+    cuisine: true, // Include cuisine tags
+    preferLocal: true
+  },
+  introvert: {
+    amenity: ['library', 'community_centre'],
+    leisure: ['park', 'garden'],
+    shop: ['books'],
+    tourism: ['museum', 'gallery'],
+    natural: ['beach', 'waterfall'],
+    quiet: true
+  },
+  artsy: {
+    tourism: ['museum', 'gallery', 'artwork'],
+    amenity: ['arts_centre', 'theatre', 'cinema'],
+    historic: ['monument', 'memorial', 'castle'],
+    shop: ['art'],
+    cultural: true
+  },
+  nature: {
+    leisure: ['park', 'nature_reserve', 'garden', 'dog_park'],
+    natural: ['beach', 'waterfall', 'cave', 'peak', 'valley', 'wood'],
+    tourism: ['viewpoint'],
+    outdoor: true
+  },
+  adventurer: {
+    tourism: ['attraction', 'viewpoint', 'theme_park'],
+    leisure: ['sports_centre', 'water_park', 'climbing'],
+    sport: ['climbing', 'cycling', 'skiing'],
+    natural: ['peak', 'cave'],
+    active: true
+  },
+  romantic: {
+    amenity: ['restaurant', 'cafe', 'bar'],
+    tourism: ['viewpoint', 'artwork'],
+    leisure: ['park', 'garden'],
+    natural: ['beach', 'waterfall'],
+    ambiance: 'intimate',
+    preferUpscale: true
+  },
+  history: {
+    historic: ['monument', 'memorial', 'castle', 'ruins', 'archaeological_site', 'battlefield'],
+    tourism: ['museum'],
+    amenity: ['place_of_worship'],
+    building: ['cathedral', 'church', 'mosque', 'temple'],
+    educational: true
+  },
+  broke: {
+    leisure: ['park', 'garden', 'playground'],
+    natural: ['beach', 'waterfall', 'viewpoint'],
+    tourism: ['viewpoint', 'artwork'],
+    historic: ['monument', 'memorial'],
+    freeOnly: true
+  }
 };
 
-// Geocode city using Foursquare
+// Geocode city using OpenStreetMap Nominatim (completely free!)
 async function geocodeCity(cityName) {
-  if (!FOURSQUARE_API_KEY) {
-    return null;
-  }
-
   try {
+    // Nominatim requires a User-Agent header
     const response = await fetch(
-      `https://api.foursquare.com/v3/places/search?query=${encodeURIComponent(cityName)}&limit=1`,
+      `${NOMINATIM_API}/search?q=${encodeURIComponent(cityName)}&format=json&limit=1`,
       {
         headers: {
-          'Authorization': FOURSQUARE_API_KEY,
-          'Accept': 'application/json'
+          'User-Agent': 'VibeGuide/1.0 (Travel Itinerary App)'
         }
       }
     );
 
     if (!response.ok) {
-      console.error(`Foursquare geocoding error: ${response.status}`);
+      console.error(`Nominatim geocoding error: ${response.status}`);
       return null;
     }
 
     const data = await response.json();
-    if (data.results && data.results.length > 0) {
-      const place = data.results[0];
+    if (data && data.length > 0) {
+      const place = data[0];
       return {
-        lat: place.geocodes.main.latitude,
-        lng: place.geocodes.main.longitude,
-        name: place.location.locality || cityName
+        lat: parseFloat(place.lat),
+        lng: parseFloat(place.lon),
+        name: place.display_name.split(',')[0] // Get city name
       };
     }
   } catch (error) {
@@ -154,79 +203,92 @@ async function geocodeCity(cityName) {
   return null;
 }
 
-// Search for places using Foursquare API
+// Search for places using OpenStreetMap Overpass API (completely free!)
 async function searchPlaces(lat, lng, category, limit = 20) {
-  if (!FOURSQUARE_API_KEY) {
-    return null;
-  }
-
   const queries = categoryToFoursquareQuery[category] || ['attraction'];
   const allPlaces = [];
 
   try {
-    // Make requests for each query type
-    for (const query of queries.slice(0, 2)) { // Limit to 2 queries to save API calls
-      const response = await fetch(
-        `https://api.foursquare.com/v3/places/search?ll=${lat},${lng}&query=${encodeURIComponent(query)}&radius=10000&limit=${Math.ceil(limit / 2)}`,
-        {
-          headers: {
-            'Authorization': FOURSQUARE_API_KEY,
-            'Accept': 'application/json'
-          }
-        }
+    // Build Overpass query for POIs around the location
+    const radius = 10000; // 10km radius
+    const amenityTypes = queries.slice(0, 3).map(q => {
+      // Map our queries to OSM amenity types
+      const osmMap = {
+        'restaurant': 'restaurant', 'cafe': 'cafe', 'bar': 'bar',
+        'museum': 'museum', 'art gallery': 'arts_centre',
+        'park': 'park', 'garden': 'garden',
+        'bookstore': 'library', 'library': 'library',
+        'beach': 'beach', 'nature': 'park',
+        'historic site': 'monument', 'landmark': 'attraction',
+        'free attraction': 'park'
+      };
+      return osmMap[q] || 'attraction';
+    });
+
+    // Create Overpass QL query
+    const overpassQuery = `
+      [out:json][timeout:25];
+      (
+        ${amenityTypes.map(type => `node["amenity"="${type}"](around:${radius},${lat},${lng});`).join('\n        ')}
+        ${amenityTypes.map(type => `way["amenity"="${type}"](around:${radius},${lat},${lng});`).join('\n        ')}
+        node["tourism"](around:${radius},${lat},${lng});
       );
+      out body ${limit};
+    `;
 
-      if (!response.ok) {
-        console.error(`Foursquare search error: ${response.status}`);
-        continue;
+    const response = await fetch(OVERPASS_API, {
+      method: 'POST',
+      body: `data=${encodeURIComponent(overpassQuery)}`,
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded'
       }
+    });
 
-      const data = await response.json();
-      if (data.results) {
-        allPlaces.push(...data.results);
-      }
+    if (!response.ok) {
+      console.error(`Overpass API error: ${response.status}`);
+      return null;
     }
 
-    // Transform Foursquare data to our format
+    const data = await response.json();
+    if (data.elements) {
+      allPlaces.push(...data.elements);
+    }
+
+    // Transform OSM data to our format
     const transformedPlaces = allPlaces.map(place => {
-      // Estimate cost based on category
-      const priceLevel = place.price || 2;
-      const costMap = ['Free', '$', '$$', '$$$'];
-      const cost = costMap[Math.min(priceLevel, 3)] || '$$';
+      const tags = place.tags || {};
+      const amenity = tags.amenity || tags.tourism || 'attraction';
 
-      // Estimate time based on category
-      const categoryName = place.categories?.[0]?.name?.toLowerCase() || '';
+      // Estimate cost based on amenity type
+      let cost = '$$';
+      if (amenity === 'park' || amenity === 'garden' || amenity === 'beach') cost = 'Free';
+      else if (amenity === 'cafe' || amenity === 'fast_food') cost = '$';
+      else if (amenity === 'restaurant' || amenity === 'bar') cost = '$$';
+      else if (amenity === 'museum' || amenity === 'arts_centre') cost = '$';
+
+      // Estimate time based on amenity type
       let time = '1hr';
-      if (categoryName.includes('cafe') || categoryName.includes('bakery')) {
-        time = '45min';
-      } else if (categoryName.includes('museum') || categoryName.includes('park')) {
-        time = '2hr';
-      } else if (categoryName.includes('restaurant')) {
-        time = '1hr';
-      }
+      if (amenity === 'cafe' || amenity === 'fast_food') time = '45min';
+      else if (amenity === 'museum' || amenity === 'park' || amenity === 'garden') time = '2hr';
+      else if (amenity === 'restaurant' || amenity === 'bar') time = '1hr';
 
-      // Generate vibe from categories
+      // Generate vibe from tags
       const vibes = [];
-      if (place.categories) {
-        place.categories.slice(0, 2).forEach(cat => {
-          const catName = cat.name.toLowerCase();
-          if (catName.includes('casual')) vibes.push('casual');
-          if (catName.includes('upscale')) vibes.push('refined');
-          if (catName.includes('outdoor')) vibes.push('outdoor');
-          if (catName.includes('historic')) vibes.push('historic');
-        });
-      }
-      if (vibes.length === 0) vibes.push('local', 'authentic');
+      if (amenity === 'park' || amenity === 'garden') vibes.push('outdoor', 'peaceful');
+      else if (amenity === 'museum' || amenity === 'arts_centre') vibes.push('cultural', 'enriching');
+      else if (amenity === 'cafe') vibes.push('casual', 'cozy');
+      else if (amenity === 'restaurant') vibes.push('local', 'authentic');
+      else vibes.push('local', 'authentic');
 
       return {
-        name: place.name,
-        type: place.categories?.[0]?.name || 'Attraction',
+        name: tags.name || 'Unnamed Place',
+        type: amenity.replace('_', ' '),
         vibe: vibes.join(', '),
         cost: cost,
         time: time,
-        description: place.description || `Popular ${place.categories?.[0]?.name || 'spot'} in the area`,
-        lat: place.geocodes.main.latitude,
-        lng: place.geocodes.main.longitude,
+        description: tags.description || `${amenity.replace('_', ' ')} in the area`,
+        lat: place.lat || place.center?.lat,
+        lng: place.lon || place.center?.lon,
         rating: place.rating || null,
         photos: place.photos || []
       };
@@ -251,8 +313,8 @@ app.post('/api/generate', async (req, res) => {
   let citySpots = cityData[city];
 
   // If city not in hardcoded data, try to use Places API
-  if (!citySpots && USE_PLACES_API && FOURSQUARE_API_KEY) {
-    console.log(`Fetching data for ${city} from Foursquare API...`);
+  if (!citySpots && USE_PLACES_API) {
+    console.log(`Fetching data for ${city} from OpenStreetMap API...`);
 
     // Geocode the city first
     const cityLocation = await geocodeCity(city);
