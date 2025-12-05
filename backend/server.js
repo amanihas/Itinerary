@@ -203,35 +203,119 @@ async function geocodeCity(cityName) {
   return null;
 }
 
+// Calculate distance between two coordinates using Haversine formula (in km)
+function calculateDistance(lat1, lon1, lat2, lon2) {
+  const R = 6371; // Earth's radius in km
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+            Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+            Math.sin(dLon/2) * Math.sin(dLon/2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  return R * c;
+}
+
+// Geographic clustering - group nearby places for walkable itineraries
+function clusterPlaces(places, targetCount = 4) {
+  if (!places || places.length === 0) return [];
+  if (places.length <= targetCount) return places;
+
+  // Find clusters of places within 2km of each other
+  const clusters = [];
+  const maxClusterRadius = 2.0; // 2km max distance within cluster
+
+  for (const place of places) {
+    let addedToCluster = false;
+
+    for (const cluster of clusters) {
+      // Check if place is within 2km of all places in this cluster
+      const withinCluster = cluster.every(p =>
+        calculateDistance(place.lat, place.lng, p.lat, p.lng) <= maxClusterRadius
+      );
+
+      if (withinCluster) {
+        cluster.push(place);
+        addedToCluster = true;
+        break;
+      }
+    }
+
+    if (!addedToCluster) {
+      clusters.push([place]);
+    }
+  }
+
+  // Score clusters by size and diversity
+  const scoredClusters = clusters.map(cluster => {
+    const types = new Set(cluster.map(p => p.type));
+    const diversity = types.size / cluster.length; // Prefer diverse spots
+    const size = cluster.length; // Prefer clusters with multiple spots
+    const score = (size >= targetCount ? 10 : size * 2) + (diversity * 5);
+
+    return { cluster, score, size, diversity };
+  });
+
+  // Sort by score and return best cluster
+  scoredClusters.sort((a, b) => b.score - a.score);
+  const bestCluster = scoredClusters[0].cluster;
+
+  // Return target count from best cluster
+  return bestCluster.slice(0, targetCount);
+}
+
 // Search for places using OpenStreetMap Overpass API (completely free!)
-async function searchPlaces(lat, lng, category, limit = 20) {
-  const queries = categoryToFoursquareQuery[category] || ['attraction'];
+async function searchPlaces(lat, lng, category, limit = 50) {
+  // Use rich persona mapping
+  const personaTags = personaToOSMTags[category] || personaToOSMTags.adventurer;
   const allPlaces = [];
 
   try {
     // Build Overpass query for POIs around the location
-    const radius = 10000; // 10km radius
-    const amenityTypes = queries.slice(0, 3).map(q => {
-      // Map our queries to OSM amenity types
-      const osmMap = {
-        'restaurant': 'restaurant', 'cafe': 'cafe', 'bar': 'bar',
-        'museum': 'museum', 'art gallery': 'arts_centre',
-        'park': 'park', 'garden': 'garden',
-        'bookstore': 'library', 'library': 'library',
-        'beach': 'beach', 'nature': 'park',
-        'historic site': 'monument', 'landmark': 'attraction',
-        'free attraction': 'park'
-      };
-      return osmMap[q] || 'attraction';
-    });
+    const radius = 10000; // 10km radius for initial search
+    const queryParts = [];
+
+    // Build query parts for each tag type
+    if (personaTags.amenity) {
+      const amenityValues = personaTags.amenity.join('|');
+      queryParts.push(`node["amenity"~"${amenityValues}"](around:${radius},${lat},${lng});`);
+      queryParts.push(`way["amenity"~"${amenityValues}"](around:${radius},${lat},${lng});`);
+    }
+
+    if (personaTags.tourism) {
+      const tourismValues = personaTags.tourism.join('|');
+      queryParts.push(`node["tourism"~"${tourismValues}"](around:${radius},${lat},${lng});`);
+      queryParts.push(`way["tourism"~"${tourismValues}"](around:${radius},${lat},${lng});`);
+    }
+
+    if (personaTags.leisure) {
+      const leisureValues = personaTags.leisure.join('|');
+      queryParts.push(`node["leisure"~"${leisureValues}"](around:${radius},${lat},${lng});`);
+      queryParts.push(`way["leisure"~"${leisureValues}"](around:${radius},${lat},${lng});`);
+    }
+
+    if (personaTags.historic) {
+      const historicValues = personaTags.historic.join('|');
+      queryParts.push(`node["historic"~"${historicValues}"](around:${radius},${lat},${lng});`);
+      queryParts.push(`way["historic"~"${historicValues}"](around:${radius},${lat},${lng});`);
+    }
+
+    if (personaTags.natural) {
+      const naturalValues = personaTags.natural.join('|');
+      queryParts.push(`node["natural"~"${naturalValues}"](around:${radius},${lat},${lng});`);
+      queryParts.push(`way["natural"~"${naturalValues}"](around:${radius},${lat},${lng});`);
+    }
+
+    if (personaTags.shop) {
+      const shopValues = personaTags.shop.join('|');
+      queryParts.push(`node["shop"~"${shopValues}"](around:${radius},${lat},${lng});`);
+      queryParts.push(`way["shop"~"${shopValues}"](around:${radius},${lat},${lng});`);
+    }
 
     // Create Overpass QL query
     const overpassQuery = `
       [out:json][timeout:25];
       (
-        ${amenityTypes.map(type => `node["amenity"="${type}"](around:${radius},${lat},${lng});`).join('\n        ')}
-        ${amenityTypes.map(type => `way["amenity"="${type}"](around:${radius},${lat},${lng});`).join('\n        ')}
-        node["tourism"](around:${radius},${lat},${lng});
+        ${queryParts.join('\n        ')}
       );
       out body ${limit};
     `;
@@ -255,61 +339,173 @@ async function searchPlaces(lat, lng, category, limit = 20) {
     }
 
     // Transform OSM data to our format
-    const transformedPlaces = allPlaces.map(place => {
-      const tags = place.tags || {};
-      const amenity = tags.amenity || tags.tourism || 'attraction';
+    const transformedPlaces = allPlaces
+      .filter(place => place.tags && place.tags.name) // Only named places
+      .map(place => {
+        const tags = place.tags || {};
+        const amenity = tags.amenity || tags.tourism || tags.leisure || tags.historic || tags.natural || tags.shop || 'attraction';
 
-      // Estimate cost based on amenity type
-      let cost = '$$';
-      if (amenity === 'park' || amenity === 'garden' || amenity === 'beach') cost = 'Free';
-      else if (amenity === 'cafe' || amenity === 'fast_food') cost = '$';
-      else if (amenity === 'restaurant' || amenity === 'bar') cost = '$$';
-      else if (amenity === 'museum' || amenity === 'arts_centre') cost = '$';
+        // Detect if free using OSM tags
+        const isFree = tags.fee === 'no' ||
+                      amenity === 'park' || amenity === 'garden' || amenity === 'beach' ||
+                      amenity === 'viewpoint' || tags.natural || amenity === 'memorial';
 
-      // Estimate time based on amenity type
-      let time = '1hr';
-      if (amenity === 'cafe' || amenity === 'fast_food') time = '45min';
-      else if (amenity === 'museum' || amenity === 'park' || amenity === 'garden') time = '2hr';
-      else if (amenity === 'restaurant' || amenity === 'bar') time = '1hr';
+        // Enhanced cost estimation
+        let cost = '$$';
+        if (isFree) {
+          cost = 'Free';
+        } else if (tags.fee === 'yes') {
+          cost = tags.charge || '$';
+        } else if (amenity === 'cafe' || amenity === 'fast_food' || amenity === 'ice_cream') {
+          cost = '$';
+        } else if (amenity === 'restaurant' || amenity === 'bar' || amenity === 'pub') {
+          cost = tags.cuisine === 'fine_dining' ? '$$$' : '$$';
+        } else if (amenity === 'museum' || amenity === 'gallery' || amenity === 'theatre') {
+          cost = tags.fee === 'no' ? 'Free' : '$-$$';
+        }
 
-      // Generate vibe from tags
-      const vibes = [];
-      if (amenity === 'park' || amenity === 'garden') vibes.push('outdoor', 'peaceful');
-      else if (amenity === 'museum' || amenity === 'arts_centre') vibes.push('cultural', 'enriching');
-      else if (amenity === 'cafe') vibes.push('casual', 'cozy');
-      else if (amenity === 'restaurant') vibes.push('local', 'authentic');
-      else vibes.push('local', 'authentic');
+        // Improved time estimates
+        const timeEstimates = {
+          cafe: '45min', fast_food: '30min', restaurant: '1-2hr', bar: '1hr', pub: '1-2hr',
+          museum: '1.5-2hr', gallery: '1hr', arts_centre: '1hr',
+          park: '1-2hr', garden: '1hr', beach: '2-3hr',
+          viewpoint: '20min', monument: '30min', memorial: '30min',
+          library: '1hr', bookshop: '45min',
+          theatre: '2-3hr', cinema: '2-3hr'
+        };
+        const time = timeEstimates[amenity] || '1hr';
 
-      return {
-        name: tags.name || 'Unnamed Place',
-        type: amenity.replace('_', ' '),
-        vibe: vibes.join(', '),
-        cost: cost,
-        time: time,
-        description: tags.description || `${amenity.replace('_', ' ')} in the area`,
-        lat: place.lat || place.center?.lat,
-        lng: place.lon || place.center?.lon,
-        rating: place.rating || null,
-        photos: place.photos || []
-      };
-    });
+        // Rich vibe generation from OSM tags
+        const vibes = [];
+        if (tags.outdoor === 'yes' || amenity === 'park' || amenity === 'garden' || tags.natural) {
+          vibes.push('outdoor', 'fresh air');
+        }
+        if (personaTags.quiet || amenity === 'library' || amenity === 'garden') {
+          vibes.push('peaceful', 'quiet');
+        }
+        if (amenity === 'museum' || amenity === 'gallery' || tags.historic) {
+          vibes.push('cultural', 'enriching');
+        }
+        if (tags.cuisine) {
+          vibes.push(`${tags.cuisine} cuisine`, 'authentic');
+        }
+        if (amenity === 'cafe' || amenity === 'bookshop') {
+          vibes.push('cozy', 'casual');
+        }
+        if (amenity === 'viewpoint' || tags.natural === 'peak') {
+          vibes.push('scenic', 'Instagram-worthy');
+        }
+        if (tags.wheelchair === 'yes') {
+          vibes.push('accessible');
+        }
+        if (personaTags.preferLocal || amenity === 'market' || amenity === 'street_art') {
+          vibes.push('local favorite', 'hidden gem');
+        }
 
-    return transformedPlaces;
+        // Hidden gem scoring
+        let hiddenGemScore = 0;
+        if (amenity === 'viewpoint' || tags.tourism === 'artwork') hiddenGemScore += 3;
+        if (tags.historic === 'memorial' || tags.historic === 'monument') hiddenGemScore += 2;
+        if (amenity === 'biergarten' || tags.shop === 'coffee') hiddenGemScore += 2;
+        if (personaTags.preferLocal) hiddenGemScore += 1;
+
+        return {
+          name: tags.name,
+          type: amenity.replace('_', ' '),
+          vibe: vibes.length > 0 ? vibes.slice(0, 3).join(', ') : 'local, authentic',
+          cost: cost,
+          time: time,
+          description: tags.description || tags.wikipedia || `${amenity.replace('_', ' ')} in the area`,
+          lat: place.lat || place.center?.lat,
+          lng: place.lon || place.center?.lon,
+          rating: null,
+          photos: [],
+          hiddenGemScore: hiddenGemScore,
+          isFree: isFree
+        };
+      });
+
+    // Apply budget filtering if freeOnly flag is set
+    let filteredPlaces = transformedPlaces;
+    if (personaTags.freeOnly) {
+      filteredPlaces = transformedPlaces.filter(place => place.isFree);
+      console.log(`Budget filtering: Found ${filteredPlaces.length} free activities out of ${transformedPlaces.length} total`);
+    }
+
+    // Apply geographic clustering
+    const clusteredPlaces = clusterPlaces(filteredPlaces, 4);
+
+    return clusteredPlaces;
   } catch (error) {
     console.error('Places search error:', error);
     return null;
   }
 }
 
-// Generate itinerary based on city, persona, and intent
+// Calculate number of spots based on duration
+function calculateNumSpots(duration) {
+  const { value, unit } = duration;
+
+  if (unit === 'hours') {
+    if (value <= 2) return 2;      // 2 hours: 2 spots
+    if (value <= 4) return 3;      // 3-4 hours: 3 spots
+    if (value <= 6) return 4;      // 5-6 hours: 4 spots
+    if (value <= 8) return 5;      // 7-8 hours: 5 spots
+    return Math.min(8, Math.ceil(value / 1.5)); // 1.5 hours per spot
+  } else if (unit === 'days') {
+    return Math.min(20, value * 4); // ~4 spots per day, max 20
+  }
+
+  return 3; // default
+}
+
+// Merge places from multiple personas
+async function getMergedPlaces(cityLocation, effectivePersonas, personaMap) {
+  const allPlaces = [];
+  const categoriesUsed = [];
+
+  for (const personaName of effectivePersonas) {
+    let category = personaMap[personaName] || 'foodie';
+
+    // For custom personas, use heuristics
+    const lower = personaName.toLowerCase();
+    if (lower.includes('food') || lower.includes('eat')) category = 'foodie';
+    else if (lower.includes('quiet') || lower.includes('alone') || lower.includes('introvert')) category = 'introvert';
+    else if (lower.includes('art') || lower.includes('creative') || lower.includes('aesthetic')) category = 'artsy';
+    else if (lower.includes('nature') || lower.includes('outdoor') || lower.includes('hike')) category = 'nature';
+    else if (lower.includes('history') || lower.includes('museum')) category = 'history';
+    else if (lower.includes('cheap') || lower.includes('broke') || lower.includes('budget')) category = 'broke';
+
+    categoriesUsed.push(category);
+
+    // Search for places for this persona
+    const places = await searchPlaces(cityLocation.lat, cityLocation.lng, category);
+
+    if (places && places.length > 0) {
+      // Tag each place with the persona category for diversity
+      places.forEach(p => p.personaCategory = category);
+      allPlaces.push(...places);
+    }
+  }
+
+  return { allPlaces, categoriesUsed };
+}
+
+// Generate itinerary based on city, personas (multiple), intents (multiple), and duration
 app.post('/api/generate', async (req, res) => {
-  const { city, persona, intent, customPersona } = req.body;
+  const { city, personas = [], intents = [], duration = { value: 3, unit: 'hours' }, customPersona } = req.body;
 
   if (!city) {
     return res.status(400).json({ error: 'City is required' });
   }
 
-  const effectivePersona = customPersona || persona;
+  // Handle empty personas array
+  const effectivePersonas = customPersona ? [customPersona] : (Array.isArray(personas) ? personas : [personas]);
+
+  if (effectivePersonas.length === 0) {
+    return res.status(400).json({ error: 'At least one persona is required' });
+  }
+
   let citySpots = cityData[city];
 
   // If city not in hardcoded data, try to use Places API
@@ -336,65 +532,86 @@ app.post('/api/generate', async (req, res) => {
       'Broke college student': 'broke'
     };
 
-    let selectedCategory = personaMap[effectivePersona] || 'foodie';
+    // Get merged places from all selected personas
+    const { allPlaces, categoriesUsed } = await getMergedPlaces(cityLocation, effectivePersonas, personaMap);
 
-    // For custom personas, use heuristics
-    if (customPersona) {
-      const lower = customPersona.toLowerCase();
-      if (lower.includes('food') || lower.includes('eat')) selectedCategory = 'foodie';
-      else if (lower.includes('quiet') || lower.includes('alone') || lower.includes('introvert')) selectedCategory = 'introvert';
-      else if (lower.includes('art') || lower.includes('creative') || lower.includes('aesthetic')) selectedCategory = 'artsy';
-      else if (lower.includes('nature') || lower.includes('outdoor') || lower.includes('hike')) selectedCategory = 'nature';
-      else if (lower.includes('history') || lower.includes('museum')) selectedCategory = 'history';
-      else if (lower.includes('cheap') || lower.includes('broke') || lower.includes('budget')) selectedCategory = 'broke';
-    }
-
-    // Search for places
-    const places = await searchPlaces(cityLocation.lat, cityLocation.lng, selectedCategory);
-
-    if (!places || places.length === 0) {
+    if (!allPlaces || allPlaces.length === 0) {
       return res.status(404).json({
         error: 'No places found',
         message: `Could not find suitable places in ${city}. Try a different city or persona.`
       });
     }
 
-    // Create a temporary citySpots object for this city
-    citySpots = {
-      [selectedCategory]: places
+    // Use the merged spots
+    let spots = allPlaces;
+
+    // Apply intent filters for all selected intents
+    const intentFilters = {
+      'cheap-date': { maxCost: '$$', keywords: [] },
+      'avoid-tourists': { keywords: ['local', 'hidden', 'authentic'] },
+      'walking-route': { keywords: ['outdoor', 'viewpoint', 'park'] },
+      'hidden-gems': { keywords: ['hidden', 'local', 'authentic'], boost: (s) => s.hiddenGemScore || 0 },
+      'photography': { keywords: ['scenic', 'instagram', 'viewpoint', 'artistic'] },
+      'spontaneous': { random: true },
+      'locals-only': { keywords: ['local', 'authentic', 'hidden'], boost: (s) => s.hiddenGemScore || 0 }
     };
 
-    // Use the API-generated spots
-    let spots = citySpots[selectedCategory];
+    // Apply filters for each selected intent
+    intents.forEach(intentId => {
+      const filter = intentFilters[intentId];
+      if (!filter) return;
 
-    // Apply intent filters (same logic as before)
-    const intentConfig = intent ? intents[intent] : null;
-
-    if (intentConfig) {
-      if (intentConfig.maxCost) {
+      if (filter.maxCost) {
         const costOrder = ['Free', '$', '$$', '$$$'];
-        const maxIndex = costOrder.indexOf(intentConfig.maxCost);
+        const maxIndex = costOrder.indexOf(filter.maxCost);
         spots = spots.filter(s => costOrder.indexOf(s.cost) <= maxIndex);
       }
 
-      if (intentConfig.keywords) {
-        spots = spots.filter(s =>
-          intentConfig.keywords.some(kw =>
+      if (filter.keywords && filter.keywords.length > 0) {
+        // Boost spots that match keywords rather than filtering them out
+        spots = spots.map(s => {
+          const matchCount = filter.keywords.filter(kw =>
             s.vibe.toLowerCase().includes(kw) ||
             s.description.toLowerCase().includes(kw)
-          )
-        );
+          ).length;
+          return { ...s, intentBoost: (s.intentBoost || 0) + matchCount };
+        });
+      }
+    });
+
+    // Calculate number of spots based on duration
+    const numSpots = calculateNumSpots(duration);
+
+    // Sort by intent boost and diversity, then select
+    const sorted = [...spots].sort((a, b) => {
+      // Prioritize intent boost
+      const boostDiff = (b.intentBoost || 0) - (a.intentBoost || 0);
+      if (boostDiff !== 0) return boostDiff;
+
+      // Then prioritize hidden gems
+      return (b.hiddenGemScore || 0) - (a.hiddenGemScore || 0);
+    });
+
+    // Select spots with diversity in mind (mix of persona categories)
+    const selected = [];
+    const usedCategories = new Set();
+
+    // First pass: select one from each persona category
+    for (const spot of sorted) {
+      if (selected.length >= numSpots) break;
+      if (!usedCategories.has(spot.personaCategory)) {
+        selected.push(spot);
+        usedCategories.add(spot.personaCategory);
       }
     }
 
-    // Select 2-4 spots
-    let numSpots = 3;
-    if (intent === 'three-hours') numSpots = 2;
-    if (intent === 'walking-route') numSpots = 4;
-
-    // Shuffle and select
-    const shuffled = [...spots].sort(() => Math.random() - 0.5);
-    const selected = shuffled.slice(0, Math.min(numSpots, shuffled.length));
+    // Second pass: fill remaining slots
+    for (const spot of sorted) {
+      if (selected.length >= numSpots) break;
+      if (!selected.includes(spot)) {
+        selected.push(spot);
+      }
+    }
 
     // Calculate totals
     const costMap = { 'Free': 0, '$': 10, '$$': 30, '$$$': 60 };
@@ -404,7 +621,7 @@ app.post('/api/generate', async (req, res) => {
       return sum + (match ? parseFloat(match[1]) * 60 : 60);
     }, 0);
 
-    // Generate personalized explanations
+    // Generate combined vibe explanation
     const explanations = {
       foodie: 'These spots celebrate authentic flavors and culinary craft',
       introvert: 'These are peaceful sanctuaries where you can recharge',
@@ -414,19 +631,26 @@ app.post('/api/generate', async (req, res) => {
       broke: 'These prove the best experiences don\'t need a big budget'
     };
 
+    const vibeDescription = categoriesUsed.length > 1
+      ? `A curated blend of ${categoriesUsed.join(', ')} experiences`
+      : explanations[categoriesUsed[0]];
+
     const itinerary = {
-      city: cityLocation.name,
-      persona: effectivePersona,
-      intent: intent || 'none',
+      city: cityLocation.name || city,
+      personas: effectivePersonas,
+      intents: intents,
+      duration: duration,
       spots: selected.map((spot, idx) => ({
         order: idx + 1,
         ...spot,
-        why: generateWhy(spot, effectivePersona, selectedCategory)
+        why: generateWhy(spot, effectivePersonas.join(' + '), spot.personaCategory || categoriesUsed[0])
       })),
       summary: {
         totalCost: totalCost === 0 ? 'Free' : `$${totalCost}`,
-        totalTime: `${Math.round(totalTime)} minutes`,
-        vibe: explanations[selectedCategory],
+        totalTime: duration.unit === 'hours'
+          ? `${duration.value} hours`
+          : `${duration.value} day${duration.value > 1 ? 's' : ''}`,
+        vibe: vibeDescription,
         route: generateRoute(selected)
       }
     };
